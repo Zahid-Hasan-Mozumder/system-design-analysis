@@ -1,0 +1,76 @@
+// Prisma schema for the S3 multipart upload tracker.
+//
+// One `Upload` row per multipart upload. It is created in PENDING state at the
+// moment S3 hands back an UploadId (step 3 of the flow) and is only moved to
+// COMPLETED once S3 has stitched the parts together (step 12).
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "esm"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UploadStatus {
+  PENDING
+  UPLOADING
+  COMPLETED
+  ABORTED
+  FAILED
+}
+
+model Upload {
+  id String @id @default(uuid()) @db.Uuid
+
+  // What the client told us about the file.
+  fileName  String
+  mimeType  String @default("application/octet-stream")
+  sizeBytes BigInt
+
+  // Where it lives in S3.
+  bucket     String
+  objectKey  String
+  s3UploadId String
+
+  // How the client was told to slice it up.
+  partSize   Int
+  totalParts Int
+
+  status UploadStatus @default(PENDING)
+
+  // Filled in by CompleteMultipartUpload.
+  location String?
+  etag     String?
+
+  // Set when the upload is aborted or fails.
+  errorMessage String?
+
+  parts UploadPart[]
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  completedAt DateTime?
+
+  @@unique([objectKey, s3UploadId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model UploadPart {
+  id String @id @default(uuid()) @db.Uuid
+
+  uploadId   String @db.Uuid
+  partNumber Int
+  etag       String
+  sizeBytes  Int
+
+  upload Upload @relation(fields: [uploadId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([uploadId, partNumber])
+  @@index([uploadId])
+}
